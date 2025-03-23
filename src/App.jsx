@@ -15,6 +15,9 @@ const App = () =>{
 
     const [shapes, setShapes] = useState(storage);
     const [paths, setPaths] = useState([]);
+    const [contextMenu, setContextMenu] = useState(null);
+    const [undoStack, setUndoStack] = useState([]);
+    const [redoStack, setRedoStack] = useState([]);
 
     useEffect(() => {
       const clearChatOnExit = () => {
@@ -60,7 +63,7 @@ const App = () =>{
       <Routes>
         <Route path="/" element={<Layout />}/>
         <Route path="/chat" element={<Chat messages={messages}/>} />
-        <Route path="/canvas" element={<Canvas shapes={shapes} setShapes={setShapes} paths={paths} setPaths={setPaths}/>} />
+        <Route path="/canvas" element={<Canvas shapes={shapes} setShapes={setShapes} paths={paths} setPaths={setPaths} contextMenu={contextMenu} setContextMenu={setContextMenu} undoStack={undoStack} setUndoStack={setUndoStack} redoStack={redoStack} setRedoStack={setRedoStack}/>} />
       </Routes>
     </BrowserRouter>
     )

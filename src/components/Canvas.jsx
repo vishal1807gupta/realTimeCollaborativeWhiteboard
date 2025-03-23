@@ -1,23 +1,61 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { socket } from "../socket";
 import { Pencil, Eraser, Move, Copy, Trash } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { renderToString } from "react-dom/server";
 
-const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
+const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMenu, undoStack, setUndoStack, redoStack, setRedoStack }) => {
     const navigate = useNavigate();
     const canvasRef = useRef(null);
     const [selectedShape, setSelectedShape] = useState(null);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDrawing, setIsDrawing] = useState(false);
     const [mode, setMode] = useState("move");
-    const [contextMenu, setContextMenu] = useState(null);
 
     const getCursorIcon = (type) => {
         const icon = type === "pencil" ? <Pencil size={24} /> : <Eraser size={24} />;
         const svgString = encodeURIComponent(renderToString(icon));
         return `data:image/svg+xml;charset=utf-8,${svgString}`;
     };
+
+    const pushToUndoStack = (state) => {
+        setUndoStack((prev) => [...prev, state]);
+        setRedoStack([]); // Clear redo stack when a new action is performed
+    };
+
+    const handleUndo = useCallback(() => {
+        if (undoStack.length === 0) return;
+        const prevState = undoStack[undoStack.length - 1];
+        setUndoStack((prev) => prev.slice(0, -1));
+        setRedoStack((prev) => [...prev, { shapes, paths }]);
+        setShapes(prevState.shapes);
+        setPaths(prevState.paths);
+        socket.emit("updateShapes", prevState.shapes);
+        socket.emit("updatePaths", prevState.paths);
+    }, [undoStack, shapes, paths]);
+
+    const handleRedo = useCallback(() => {
+        if (redoStack.length === 0) return;
+        const nextState = redoStack[redoStack.length - 1];
+        setRedoStack((prev) => prev.slice(0, -1));
+        setUndoStack((prev) => [...prev, { shapes, paths }]);
+        setShapes(nextState.shapes);
+        setPaths(nextState.paths);
+        socket.emit("updateShapes", nextState.shapes);
+        socket.emit("updatePaths", nextState.paths);
+    }, [redoStack, shapes, paths]);
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.ctrlKey && e.key === "z") {
+                handleUndo();
+            } else if (e.ctrlKey && e.key === "y") {
+                handleRedo();
+            }
+        };
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [handleUndo, handleRedo]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -67,6 +105,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
         const y = e.clientY - rect.top;
 
         if (mode === "draw") {
+            pushToUndoStack({ shapes, paths });
             setIsDrawing(true);
             const prevPaths = [...paths, { color: "black", width: 2, points: [{ x, y }] }];
             setPaths(prevPaths);
@@ -75,6 +114,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
         }
 
         if (mode === "erase") {
+            pushToUndoStack({ shapes, paths });
             setIsDrawing(true);
             return;
         }
@@ -82,10 +122,12 @@ const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
         for (let shape of shapes) {
             if (isOnResizeHandle(shape, x, y)) {
                 setSelectedShape({ ...shape, isResizing: true });
+                pushToUndoStack({ shapes, paths });
                 return;
             } else if (isInside(shape, x, y)) {
                 setSelectedShape({ ...shape, isDragging: true });
                 setOffset({ x: x - shape.x, y: y - shape.y });
+                pushToUndoStack({ shapes, paths });
                 return;
             }
         }
@@ -152,6 +194,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
     };
 
     const duplicateShape = (shape) => {
+        pushToUndoStack({ shapes, paths });
         const newShape = { ...shape, id: Date.now(), x: shape.x + 20, y: shape.y + 20 };
         setShapes([...shapes, newShape]);
         socket.emit("updateShapes", [...shapes, newShape]);
@@ -159,6 +202,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
     };
 
     const deleteShape = (shape) => {
+        pushToUndoStack({ shapes, paths });
         const remainingSquares = shapes.filter(s => s.type === "square").length;
         const remainingCircles = shapes.filter(s => s.type === "circle").length;
 
