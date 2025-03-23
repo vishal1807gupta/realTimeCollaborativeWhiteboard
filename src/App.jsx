@@ -1,6 +1,6 @@
 import React ,{useEffect, useState} from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Shapes from "./components/Shapes";
+import Canvas from "./components/Canvas";
 import Chat from "./components/Chat";
 import Layout from "./components/Layout";
 import { socket } from "./socket";
@@ -60,7 +60,7 @@ const App = () =>{
       <Routes>
         <Route path="/" element={<Layout />}/>
         <Route path="/chat" element={<Chat messages={messages}/>} />
-        <Route path="/canvas" element={<Shapes shapes={shapes} setShapes={setShapes} paths={paths} setPaths={setPaths}/>} />
+        <Route path="/canvas" element={<Canvas shapes={shapes} setShapes={setShapes} paths={paths} setPaths={setPaths}/>} />
       </Routes>
     </BrowserRouter>
     )

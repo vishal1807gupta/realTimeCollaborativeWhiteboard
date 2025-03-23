@@ -1,15 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import { socket } from "../socket";
-import { Pencil, Eraser, Move } from "lucide-react";
+import { Pencil, Eraser, Move, Copy, Trash } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { renderToString } from "react-dom/server";
 
-const Canvas = ({shapes,setShapes,paths,setPaths}) => {
+const Canvas = ({ shapes, setShapes, paths, setPaths }) => {
     const navigate = useNavigate();
     const canvasRef = useRef(null);
     const [selectedShape, setSelectedShape] = useState(null);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDrawing, setIsDrawing] = useState(false);
-    const [mode, setMode] = useState("move"); // Modes: move, draw, erase
+    const [mode, setMode] = useState("move");
+    const [contextMenu, setContextMenu] = useState(null);
+
+    const getCursorIcon = (type) => {
+        const icon = type === "pencil" ? <Pencil size={24} /> : <Eraser size={24} />;
+        const svgString = encodeURIComponent(renderToString(icon));
+        return `data:image/svg+xml;charset=utf-8,${svgString}`;
+    };
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -17,8 +25,8 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
 
         const drawAllShapes = () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            shapes.forEach(shape => drawShape(ctx, shape));
-            paths.forEach(path => drawPath(ctx, path));
+            shapes.forEach((shape) => drawShape(ctx, shape));
+            paths.forEach((path) => drawPath(ctx, path));
         };
 
         const drawShape = (ctx, shape) => {
@@ -39,7 +47,7 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
             ctx.lineCap = "round";
             ctx.beginPath();
             ctx.moveTo(path.points[0].x, path.points[0].y);
-            path.points.forEach(point => ctx.lineTo(point.x, point.y));
+            path.points.forEach((point) => ctx.lineTo(point.x, point.y));
             ctx.stroke();
         };
 
@@ -52,6 +60,7 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
     }, [shapes, paths]);
 
     const handleMouseDown = (e) => {
+        if (contextMenu) setContextMenu(null);
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -93,21 +102,21 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
             if (mode === "erase") {
                 const prevPaths = [];
                 for (let path of paths) {
-                    const points = path.points.filter(point => !isNearby(point, x, y, 40)); // Increased threshold to 40
+                    const points = path.points.filter((point) => !isNearby(point, x, y, 40));
                     if (points.length > 0) prevPaths.push({ ...path, points });
                 }
                 setPaths(prevPaths);
                 socket.emit("updatePaths", prevPaths);
                 return;
             }
-            const newPaths = paths;
+            const newPaths = [...paths];
             newPaths[newPaths.length - 1].points.push({ x, y });
             setPaths(newPaths);
             socket.emit("updatePaths", newPaths);
         }
 
         if (selectedShape) {
-            let updatedShapes = shapes.map(shape => {
+            let updatedShapes = shapes.map((shape) => {
                 if (shape.id === selectedShape.id) {
                     if (selectedShape.isResizing) {
                         return { ...shape, size: Math.max(20, x - shape.x, y - shape.y) };
@@ -128,17 +137,46 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
         setSelectedShape(null);
     };
 
-    const isInside = (shape, x, y) => {
-        return x >= shape.x && x <= shape.x + shape.size && y >= shape.y && y <= shape.y + shape.size;
+    const handleContextMenu = (e) => {
+        e.preventDefault();
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        for (let shape of shapes) {
+            if (isInside(shape, x, y)) {
+                setContextMenu({ x: e.clientX, y: e.clientY, shape });
+                return;
+            }
+        }
     };
 
-    const isOnResizeHandle = (shape, x, y) => {
-        return x >= shape.x + shape.size - 10 && x <= shape.x + shape.size && y >= shape.y + shape.size - 10 && y <= shape.y + shape.size;
+    const duplicateShape = (shape) => {
+        const newShape = { ...shape, id: Date.now(), x: shape.x + 20, y: shape.y + 20 };
+        setShapes([...shapes, newShape]);
+        socket.emit("updateShapes", [...shapes, newShape]);
+        setContextMenu(null);
     };
 
-    const isNearby = (point, x, y, threshold) => {
-        return Math.abs(point.x - x) < threshold && Math.abs(point.y - y) < threshold;
+    const deleteShape = (shape) => {
+        const remainingSquares = shapes.filter(s => s.type === "square").length;
+        const remainingCircles = shapes.filter(s => s.type === "circle").length;
+
+        if ((shape.type === "square" && remainingSquares === 1) || (shape.type === "circle" && remainingCircles === 1)) {
+            return; // Prevent deleting the last one
+        }
+
+        const newShapes = shapes.filter((s) => s.id !== shape.id);
+        setShapes(newShapes);
+        socket.emit("updateShapes", newShapes);
+        setContextMenu(null);
     };
+
+    const isInside = (shape, x, y) => x >= shape.x && x <= shape.x + shape.size && y >= shape.y && y <= shape.y + shape.size;
+
+    const isOnResizeHandle = (shape, x, y) => x >= shape.x + shape.size - 10 && x <= shape.x + shape.size && y >= shape.y + shape.size - 10 && y <= shape.y + shape.size;
+
+    const isNearby = (point, x, y, threshold) => Math.abs(point.x - x) < threshold && Math.abs(point.y - y) < threshold;
 
     return (
         <>
@@ -147,15 +185,30 @@ const Canvas = ({shapes,setShapes,paths,setPaths}) => {
                 <button onClick={() => setMode("draw")} className={mode === "draw" ? "text-blue-500" : "text-gray-500"}><Pencil /></button>
                 <button onClick={() => setMode("erase")} className={mode === "erase" ? "text-blue-500" : "text-gray-500"}><Eraser /></button>
             </div>
-            <canvas
-                ref={canvasRef}
-                width={500}
-                height={500}
-                className="border-2 border-black "
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
+            <canvas 
+                ref={canvasRef} 
+                width={500} 
+                height={500} 
+                style={{
+                    cursor:
+                        mode === "draw"
+                            ? `url(${getCursorIcon("pencil")}) 0 24, auto`
+                            : mode === "erase"
+                                ? `url(${getCursorIcon("eraser")}) 0 24, auto`
+                                : "default",
+                }}
+                className="border-2 border-black" 
+                onMouseDown={handleMouseDown} 
+                onMouseMove={handleMouseMove} 
+                onMouseUp={handleMouseUp} 
+                onContextMenu={handleContextMenu}
             />
+            {contextMenu && (
+                <div className="absolute bg-white shadow-md p-2" style={{ top: contextMenu.y, left: contextMenu.x }}>
+                    <button onClick={() => duplicateShape(contextMenu.shape)}><Copy /> Duplicate</button>
+                    <button onClick={() => deleteShape(contextMenu.shape)}><Trash /> Delete</button>
+                </div>
+            )}
             <button onClick={() => navigate("/chat")} className="border-2 border-black bg-green-600 text-white">
                 Chat
             </button> 
