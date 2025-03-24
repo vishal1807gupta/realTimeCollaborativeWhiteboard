@@ -8,38 +8,27 @@ import { socket } from "./socket";
 const App = () =>{
 
     const [messages, setMessages] = useState([]);
-    const storage = (localStorage.getItem("shapes")===null)?[
-        { id: 1, type: "square", x: 50, y: 50, size: 100, color: "blue" },
-        { id: 2, type: "circle", x: 200, y: 50, size: 100, color: "red" }
-    ]:JSON.parse(localStorage.getItem("shapes"));
 
-    const [shapes, setShapes] = useState(storage);
+    const [shapes, setShapes] = useState([
+      { id: 1, type: "square", x: 50, y: 50, size: 100, color: "blue" },
+      { id: 2, type: "circle", x: 200, y: 50, size: 100, color: "red" }
+  ]);
     const [paths, setPaths] = useState([]);
     const [contextMenu, setContextMenu] = useState(null);
     const [undoStack, setUndoStack] = useState([]);
     const [redoStack, setRedoStack] = useState([]);
 
     useEffect(() => {
-      const clearChatOnExit = () => {
-          localStorage.removeItem("chats");
-          localStorage.removeItem("shapes");
-          localStorage.removeItem("paths");
-      };
-
-      window.addEventListener("beforeunload", clearChatOnExit);
-
+     
       socket.on("updateShapes", (updatedShapes) => {
           setShapes(updatedShapes);
-          localStorage.setItem("shapes", JSON.stringify(updatedShapes));
       });
 
       socket.on("updatePaths", (updatedPaths) => {
           setPaths(updatedPaths);
-          localStorage.setItem("paths", JSON.stringify(updatedPaths));
       });
       
       return () => {
-          window.removeEventListener("beforeunload", clearChatOnExit);
           socket.off("updateShapes");
           socket.off("updatePaths");
       };
@@ -48,9 +37,7 @@ const App = () =>{
      useEffect(() => {
     
         socket.on("message", (newMessage) => {
-          const chats = localStorage.getItem("chats")===null?[]:JSON.parse(localStorage.getItem("chats"));
-          setMessages([...chats,newMessage]);
-          localStorage.setItem("chats",JSON.stringify([...chats,newMessage]));
+          setMessages(prevMessages=>[...prevMessages,newMessage]);
         });
     
         return ()=>{
