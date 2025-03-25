@@ -45,11 +45,6 @@ io.on('connection', (socket) => {
       io.emit("message", data); // Broadcast message to all users
     });
 
-    socket.emit('updateShapes', currentShapes);
-    socket.emit('updatePaths', currentPaths);
-    socket.emit('updateUndoStack', globalUndoStack);
-    socket.emit('updateRedoStack', globalRedoStack);
-
     // Handle updates to shapes
     socket.on('updateShapes', (shapes) => {
         currentShapes = shapes;
