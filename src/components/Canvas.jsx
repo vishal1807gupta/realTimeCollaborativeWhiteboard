@@ -19,31 +19,18 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     };
 
     const pushToUndoStack = (state) => {
-        setUndoStack((prev) => [...prev, state]);
-        setRedoStack([]); // Clear redo stack when a new action is performed
+        socket.emit("pushToUndoStack", state);
     };
 
+    // Modified to request undo from server
     const handleUndo = useCallback(() => {
-        if (undoStack.length === 0) return;
-        const prevState = undoStack[undoStack.length - 1];
-        setUndoStack((prev) => prev.slice(0, -1));
-        setRedoStack((prev) => [...prev, { shapes, paths }]);
-        setShapes(prevState.shapes);
-        setPaths(prevState.paths);
-        socket.emit("updateShapes", prevState.shapes);
-        socket.emit("updatePaths", prevState.paths);
-    }, [undoStack, shapes, paths]);
+        socket.emit("requestUndo");
+    }, []);
 
+    // Modified to request redo from server
     const handleRedo = useCallback(() => {
-        if (redoStack.length === 0) return;
-        const nextState = redoStack[redoStack.length - 1];
-        setRedoStack((prev) => prev.slice(0, -1));
-        setUndoStack((prev) => [...prev, { shapes, paths }]);
-        setShapes(nextState.shapes);
-        setPaths(nextState.paths);
-        socket.emit("updateShapes", nextState.shapes);
-        socket.emit("updatePaths", nextState.paths);
-    }, [redoStack, shapes, paths]);
+        socket.emit("requestRedo");
+    }, []);
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -139,24 +126,64 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-
+    
         if (isDrawing) {
             if (mode === "erase") {
-                const prevPaths = [];
-                for (let path of paths) {
-                    const points = path.points.filter((point) => !isNearby(point, x, y, 40));
-                    if (points.length > 0) prevPaths.push({ ...path, points });
-                }
-                setPaths(prevPaths);
-                socket.emit("updatePaths", prevPaths);
+                // New erasing logic that handles path splitting
+                const newPaths = [];
+                
+                paths.forEach(path => {
+                    // Check if this path needs to be split
+                    const segments = [];
+                    let currentSegment = [];
+                    let eraseOccurred = false;
+                    
+                    // Process each point in the path
+                    path.points.forEach((point, index) => {
+                        if (isNearby(point, x, y, 20)) {
+                            eraseOccurred = true;
+                            // If we have points in the current segment, finish it
+                            if (currentSegment.length > 1) {
+                                segments.push([...currentSegment]);
+                            }
+                            currentSegment = [];
+                        } else {
+                            currentSegment.push(point);
+                            
+                            // If this is the last point and we have a segment
+                            if (index === path.points.length - 1 && currentSegment.length > 0) {
+                                segments.push([...currentSegment]);
+                            }
+                        }
+                    });
+                    
+                    // If no erasing happened, keep the original path
+                    if (!eraseOccurred) {
+                        newPaths.push(path);
+                    } else {
+                        // Add each valid segment as a new path
+                        segments.forEach(segment => {
+                            if (segment.length > 1) {
+                                newPaths.push({
+                                    ...path,
+                                    points: segment
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                setPaths(newPaths);
+                socket.emit("updatePaths", newPaths);
                 return;
             }
+            
             const newPaths = [...paths];
             newPaths[newPaths.length - 1].points.push({ x, y });
             setPaths(newPaths);
             socket.emit("updatePaths", newPaths);
         }
-
+    
         if (selectedShape) {
             let updatedShapes = shapes.map((shape) => {
                 if (shape.id === selectedShape.id) {
@@ -168,7 +195,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                 }
                 return shape;
             });
-
+    
             setShapes(updatedShapes);
             socket.emit("updateShapes", updatedShapes);
         }

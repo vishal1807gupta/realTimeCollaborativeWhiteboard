@@ -27,10 +27,28 @@ const App = () =>{
       socket.on("updatePaths", (updatedPaths) => {
           setPaths(updatedPaths);
       });
+
+      socket.on("updateUndoStack", (newUndoStack) => {
+          setUndoStack(newUndoStack);
+      });
+
+      // Server updates client's redo stack
+      socket.on("updateRedoStack", (newRedoStack) => {
+          setRedoStack(newRedoStack);
+      });
+
+      // Apply undo/redo state changes
+      socket.on("applyState", (state) => {
+          setShapes(state.shapes);
+          setPaths(state.paths);
+      });
       
       return () => {
           socket.off("updateShapes");
           socket.off("updatePaths");
+          socket.off("updateUndoStack");
+          socket.off("updateRedoStack");
+          socket.off("applyState");
       };
     }, []);
 
