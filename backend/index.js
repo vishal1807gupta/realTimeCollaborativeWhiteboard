@@ -70,8 +70,8 @@ io.on('connection', (socket) => {
         }
         
         globalUndoStack.push({
-            shapes: [...currentShapes],
-            paths: [...currentPaths]
+            shapes: [...state.shapes],
+            paths: [...state.paths]
         });
         
         // Clear redo stack when a new action is performed
