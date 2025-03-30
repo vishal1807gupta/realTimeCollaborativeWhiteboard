@@ -19,7 +19,7 @@ app.use(cors());
 
 const io = new Server(server, {
     cors: {
-        origin: "*", 
+        origin: "https://whiteboard-prime.netlify.app", 
         methods: ["GET", "POST"]
     } // Allowing backend to accept requests from my frontend
 });
