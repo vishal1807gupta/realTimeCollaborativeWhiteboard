@@ -1,16 +1,35 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { socket } from "../socket";
-import { Pencil, Eraser, Move, Copy, Trash } from "lucide-react";
+import { Pencil, Eraser, Move, Copy, Trash, Undo, Redo, ChevronLeft, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { renderToString } from "react-dom/server";
 
-const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMenu, undoStack, setUndoStack, redoStack, setRedoStack }) => {
+const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMenu}) => {
     const navigate = useNavigate();
     const canvasRef = useRef(null);
     const [selectedShape, setSelectedShape] = useState(null);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDrawing, setIsDrawing] = useState(false);
     const [mode, setMode] = useState("move");
+    const [alert, setAlert] = useState(null);
+    const lastPushedStateRef = useRef(null);
+    const alertTimeoutRef = useRef(null);
+
+    // Simple function to show an alert message
+    const showAlert = (message) => {
+        // Clear any existing timeout
+        if (alertTimeoutRef.current) {
+            clearTimeout(alertTimeoutRef.current);
+        }
+        
+        // Show the alert
+        setAlert(message);
+        
+        // Hide it after 2 seconds
+        alertTimeoutRef.current = setTimeout(() => {
+            setAlert(null);
+        }, 2000);
+    };
 
     const getCursorIcon = (type) => {
         const icon = type === "pencil" ? <Pencil size={24} /> : <Eraser size={24} />;
@@ -18,16 +37,23 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         return `data:image/svg+xml;charset=utf-8,${svgString}`;
     };
 
+    // Check if states are different before pushing to undo stack
     const pushToUndoStack = (state) => {
-        socket.emit("pushToUndoStack", state);
+        const stateStr = JSON.stringify(state);
+        const lastStateStr = lastPushedStateRef.current;
+        
+        if (lastStateStr !== stateStr) {
+            socket.emit("pushToUndoStack", state);
+            lastPushedStateRef.current = stateStr;
+        }
     };
 
-    // Modified to request undo from server
+    // Request undo from server
     const handleUndo = useCallback(() => {
         socket.emit("requestUndo");
     }, []);
 
-    // Modified to request redo from server
+    // Request redo from server
     const handleRedo = useCallback(() => {
         socket.emit("requestRedo");
     }, []);
@@ -43,6 +69,27 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
     }, [handleUndo, handleRedo]);
+
+    // Socket response handlers for alerts
+    useEffect(() => {
+        // These are the socket event handlers
+        socket.on("undoResponse", (success) => {
+            if (!success) {
+                showAlert("Nothing to undo");
+            }
+        });
+
+        socket.on("redoResponse", (success) => {
+            if (!success) {
+                showAlert("Nothing to redo");
+            }
+        });
+
+        return () => {
+            socket.off("undoResponse");
+            socket.off("redoResponse");
+        };
+    }, []);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -91,17 +138,21 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
+        const currentState = { shapes, paths };
+
         if (mode === "draw") {
-            pushToUndoStack({ shapes, paths });
+            pushToUndoStack(currentState);
             setIsDrawing(true);
-            const prevPaths = [...paths, { color: "black", width: 2, points: [{ x, y }] }];
-            setPaths(prevPaths);
-            socket.emit("updatePaths", prevPaths);
+            const newPaths = [...paths, { color: "black", width: 2, points: [{ x, y }] }];
+            setPaths(newPaths);
+            // Send the complete state including both shapes and paths
+            socket.emit("updatePaths", newPaths);
+            socket.emit("updateShapes", shapes); // Also send shapes to ensure consistency
             return;
         }
 
         if (mode === "erase") {
-            pushToUndoStack({ shapes, paths });
+            pushToUndoStack(currentState);
             setIsDrawing(true);
             return;
         }
@@ -109,12 +160,12 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         for (let shape of shapes) {
             if (isOnResizeHandle(shape, x, y)) {
                 setSelectedShape({ ...shape, isResizing: true });
-                pushToUndoStack({ shapes, paths });
+                pushToUndoStack(currentState);
                 return;
             } else if (isInside(shape, x, y)) {
                 setSelectedShape({ ...shape, isDragging: true });
                 setOffset({ x: x - shape.x, y: y - shape.y });
-                pushToUndoStack({ shapes, paths });
+                pushToUndoStack(currentState);
                 return;
             }
         }
@@ -131,6 +182,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
             if (mode === "erase") {
                 // New erasing logic that handles path splitting
                 const newPaths = [];
+                let hasChanged = false;
                 
                 paths.forEach(path => {
                     // Check if this path needs to be split
@@ -142,6 +194,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                     path.points.forEach((point, index) => {
                         if (isNearby(point, x, y, 20)) {
                             eraseOccurred = true;
+                            hasChanged = true;
                             // If we have points in the current segment, finish it
                             if (currentSegment.length > 1) {
                                 segments.push([...currentSegment]);
@@ -173,15 +226,22 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                     }
                 });
                 
-                setPaths(newPaths);
-                socket.emit("updatePaths", newPaths);
+                // Only update if something actually changed
+                if (hasChanged) {
+                    setPaths(newPaths);
+                    // Send the complete state including both shapes and paths
+                    socket.emit("updatePaths", newPaths);
+                    socket.emit("updateShapes", shapes); // Also send shapes to ensure consistency
+                }
                 return;
             }
             
             const newPaths = [...paths];
             newPaths[newPaths.length - 1].points.push({ x, y });
             setPaths(newPaths);
+            // Send the complete state including both shapes and paths
             socket.emit("updatePaths", newPaths);
+            socket.emit("updateShapes", shapes); // Also send shapes to ensure consistency
         }
     
         if (selectedShape) {
@@ -197,7 +257,9 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
             });
     
             setShapes(updatedShapes);
+            // Send the complete state including both shapes and paths
             socket.emit("updateShapes", updatedShapes);
+            socket.emit("updatePaths", paths); // Also send paths to ensure consistency
         }
     };
 
@@ -223,23 +285,28 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const duplicateShape = (shape) => {
         pushToUndoStack({ shapes, paths });
         const newShape = { ...shape, id: Date.now(), x: shape.x + 20, y: shape.y + 20 };
-        setShapes([...shapes, newShape]);
-        socket.emit("updateShapes", [...shapes, newShape]);
+        const updatedShapes = [...shapes, newShape];
+        setShapes(updatedShapes);
+        // Send the complete state including both shapes and paths
+        socket.emit("updateShapes", updatedShapes);
+        socket.emit("updatePaths", paths); // Also send paths to ensure consistency
         setContextMenu(null);
     };
 
     const deleteShape = (shape) => {
-        pushToUndoStack({ shapes, paths });
         const remainingSquares = shapes.filter(s => s.type === "square").length;
         const remainingCircles = shapes.filter(s => s.type === "circle").length;
 
         if ((shape.type === "square" && remainingSquares === 1) || (shape.type === "circle" && remainingCircles === 1)) {
+            showAlert("Cannot delete the last " + shape.type);
             return; // Prevent deleting the last one
         }
-
-        const newShapes = shapes.filter((s) => s.id !== shape.id);
-        setShapes(newShapes);
-        socket.emit("updateShapes", newShapes);
+        pushToUndoStack({ shapes, paths });
+        const updatedShapes = shapes.filter((s) => s.id !== shape.id);
+        setShapes(updatedShapes);
+        // Send the complete state including both shapes and paths
+        socket.emit("updateShapes", updatedShapes);
+        socket.emit("updatePaths", paths); // Also send paths to ensure consistency
         setContextMenu(null);
     };
 
@@ -250,40 +317,148 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const isNearby = (point, x, y, threshold) => Math.abs(point.x - x) < threshold && Math.abs(point.y - y) < threshold;
 
     return (
-        <>
-            <div className="flex gap-4 p-4">
-                <button onClick={() => setMode("move")} className={mode === "move" ? "text-blue-500" : "text-gray-500"}><Move /></button>
-                <button onClick={() => setMode("draw")} className={mode === "draw" ? "text-blue-500" : "text-gray-500"}><Pencil /></button>
-                <button onClick={() => setMode("erase")} className={mode === "erase" ? "text-blue-500" : "text-gray-500"}><Eraser /></button>
+        <div className="flex flex-col min-h-screen bg-gray-50 relative">
+            {/* Header */}
+            <div className="bg-white border-b shadow-sm p-4">
+                <div className="container mx-auto flex items-center justify-between">
+                    <h1 className="text-xl font-bold text-gray-800">Collaborative Canvas</h1>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={handleUndo} 
+                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                            title="Undo (Ctrl+Z)"
+                        >
+                            <Undo size={20} />
+                        </button>
+                        <button 
+                            onClick={handleRedo} 
+                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                            title="Redo (Ctrl+Y)"
+                        >
+                            <Redo size={20} />
+                        </button>
+                    </div>
+                </div>
             </div>
-            <canvas 
-                ref={canvasRef} 
-                width={500} 
-                height={500} 
-                style={{
-                    cursor:
-                        mode === "draw"
-                            ? `url(${getCursorIcon("pencil")}) 0 24, auto`
-                            : mode === "erase"
-                                ? `url(${getCursorIcon("eraser")}) 0 24, auto`
-                                : "default",
-                }}
-                className="border-2 border-black" 
-                onMouseDown={handleMouseDown} 
-                onMouseMove={handleMouseMove} 
-                onMouseUp={handleMouseUp} 
-                onContextMenu={handleContextMenu}
-            />
-            {contextMenu && (
-                <div className="absolute bg-white shadow-md p-2" style={{ top: contextMenu.y, left: contextMenu.x }}>
-                    <button onClick={() => duplicateShape(contextMenu.shape)}><Copy /> Duplicate</button>
-                    <button onClick={() => deleteShape(contextMenu.shape)}><Trash /> Delete</button>
+            
+            {/* Alert popup */}
+            {alert && (
+                <div className="fixed top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-md shadow-lg z-50 flex items-center">
+                    <AlertCircle size={16} className="mr-2" />
+                    <span>{alert}</span>
                 </div>
             )}
-            <button onClick={() => navigate("/chat")} className="border-2 border-black bg-green-600 text-white">
-                Chat
-            </button> 
-        </>
+            
+            {/* Toolbar */}
+            <div className="bg-white border-b shadow-sm">
+                <div className="container mx-auto p-2">
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => setMode("move")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "move" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Move Tool"
+                        >
+                            <Move size={20} />
+                            <span className="hidden sm:inline">Move</span>
+                        </button>
+                        <button 
+                            onClick={() => setMode("draw")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "draw" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Draw Tool"
+                        >
+                            <Pencil size={20} />
+                            <span className="hidden sm:inline">Draw</span>
+                        </button>
+                        <button 
+                            onClick={() => setMode("erase")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "erase" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Erase Tool"
+                        >
+                            <Eraser size={20} />
+                            <span className="hidden sm:inline">Erase</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            {/* Main Canvas Area */}
+            <div className="flex-grow p-4">
+                <div className="container mx-auto">
+                    <div className="bg-white rounded-lg shadow-md p-4">
+                        <canvas 
+                            ref={canvasRef} 
+                            width={800} 
+                            height={500} 
+                            style={{
+                                cursor:
+                                    mode === "draw"
+                                        ? `url(${getCursorIcon("pencil")}) 0 24, auto`
+                                        : mode === "erase"
+                                            ? `url(${getCursorIcon("eraser")}) 0 24, auto`
+                                            : "default",
+                                backgroundColor: "#f8f9fa",
+                                border: "1px solid #dee2e6",
+                                borderRadius: "4px",
+                                maxWidth: "100%",
+                            }}
+                            className="mx-auto" 
+                            onMouseDown={handleMouseDown} 
+                            onMouseMove={handleMouseMove} 
+                            onMouseUp={handleMouseUp} 
+                            onContextMenu={handleContextMenu}
+                        />
+                    </div>
+                </div>
+            </div>
+            
+            {/* Context Menu */}
+            {contextMenu && (
+                <div 
+                    className="fixed bg-white shadow-lg rounded-md border overflow-hidden z-50" 
+                    style={{ top: contextMenu.y, left: contextMenu.x }}
+                >
+                    <button 
+                        onClick={() => duplicateShape(contextMenu.shape)}
+                        className="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+                    >
+                        <Copy size={16} />
+                        <span>Duplicate</span>
+                    </button>
+                    <button 
+                        onClick={() => deleteShape(contextMenu.shape)}
+                        className="w-full px-4 py-2 text-left hover:bg-red-50 text-red-600 flex items-center gap-2"
+                    >
+                        <Trash size={16} />
+                        <span>Delete</span>
+                    </button>
+                </div>
+            )}
+            
+            {/* Footer navigation */}
+            <div className="bg-white border-t p-4">
+                <div className="container mx-auto">
+                    <button 
+                        onClick={() => navigate("/chat")} 
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2"
+                    >
+                        <ChevronLeft size={16} />
+                        Go to Chat
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 };
 

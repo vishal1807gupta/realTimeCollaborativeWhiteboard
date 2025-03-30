@@ -5,6 +5,9 @@ const app = express();
 const cors = require("cors");
 const server = http.createServer(app);
 
+app.use(cors());
+// Enable CORS to allow frontend connections
+
 // Express (app) alone handles only HTTP requests (GET, POST, etc.).
 // http.createServer(app) creates a raw HTTP server that can handle both:
 // Express routes (normal API requests).
@@ -13,9 +16,6 @@ const server = http.createServer(app);
 // Express alone is NOT a server—it's just a function that handles HTTP requests.
 // ✔️ app.listen(4000) automatically creates a server behind the scenes.
 // ✔️ http.createServer(app) is needed when using WebSockets (socket.io) because WebSockets need access to the raw HTTP server.
-
-app.use(cors());
-// Enable CORS to allow frontend connections
 
 const io = new Server(server, {
     cors: {
@@ -32,62 +32,134 @@ let currentShapes = [
 let currentPaths = [];
 let globalUndoStack = [];
 let globalRedoStack = [];
+let connectedUsers = {};
 
 // Maximum stack size to prevent memory issues
 const MAX_STACK_SIZE = 50;
 
+// Track user join timestamps
+let userJoinTimes = {};
+
 io.on('connection', (socket) => {
     console.log('user connected:', socket.id);
     
-    // Send current state to newly connected user
+    // Record join time
+    userJoinTimes[socket.id] = new Date();
+    
+    socket.on('userJoined', (username) => {
+        // Store user info
+        connectedUsers[socket.id] = {
+            id: socket.id,
+            username: username,
+            joinedAt: userJoinTimes[socket.id]
+        };
+        
+        // Broadcast updated user list to all clients
+        io.emit('updateUsers', Object.values(connectedUsers));
+        
+        // Notify all users except the one who joined
+        socket.broadcast.emit('userNotification', `${username} has joined the whiteboard.`);
+        
+        // Welcome message just to the user who joined
+        socket.emit('userNotification', `Welcome to the collaborative whiteboard, ${username}!`);
+    });
+    
+    // Handle user left event (manual disconnect)
+    socket.on('userLeft', (username) => {
+        handleUserDisconnect(socket.id, username);
+    });
 
     socket.on("message", (data) => {
-      io.emit("message", data); // Broadcast message to all users
+        io.emit("message", data); // Broadcast message to all users
     });
 
     // Handle updates to shapes
     socket.on('updateShapes', (shapes) => {
         currentShapes = shapes;
         socket.broadcast.emit('updateShapes', shapes);
+        socket.broadcast.emit('updatePaths', currentPaths);
     });
 
     // Handle updates to paths
     socket.on('updatePaths', (paths) => {
         currentPaths = paths;
+        socket.broadcast.emit('updateShapes', currentShapes);
         socket.broadcast.emit('updatePaths', paths);
     });
 
     // Handle pushing to the undo stack
     socket.on('pushToUndoStack', (state) => {
+        // Add timestamp to state
+        const newState = {
+            shapes: state.shapes || [...currentShapes],
+            paths: state.paths || [...currentPaths],
+            timestamp: new Date()
+        };
+        
         // Limit stack size
         if (globalUndoStack.length >= MAX_STACK_SIZE) {
             globalUndoStack.shift(); // Remove oldest state
         }
         
-        globalUndoStack.push({
-            shapes: [...state.shapes],
-            paths: [...state.paths]
-        });
+        // Add to global undo stack
+        globalUndoStack.push(newState);
         
         // Clear redo stack when a new action is performed
         globalRedoStack = [];
         
-        // Broadcast updated stacks to all clients
-        io.emit('updateUndoStack', globalUndoStack);
-        io.emit('updateRedoStack', globalRedoStack);
+        // Send updates to all clients with filtering based on join time
+        for (const userId in connectedUsers) {
+            const userSocket = io.sockets.sockets.get(userId);
+            if (!userSocket) continue;
+            
+            const joinTime = userJoinTimes[userId];
+            if (!joinTime) continue;
+            
+            // Filter the stacks for this specific user based on join time
+            const filteredStack = globalUndoStack.filter(state => 
+                state.timestamp >= joinTime
+            );
+            
+            // Send filtered stacks to user
+            userSocket.emit('updateUndoStack', filteredStack);
+            userSocket.emit('updateRedoStack', globalRedoStack);
+        }
     });
 
     // Handle undo request
     socket.on('requestUndo', () => {
-        if (globalUndoStack.length === 0) return;
+        const joinTime = userJoinTimes[socket.id];
+        if (!joinTime) return;
         
-        // Get the last state from undo stack
-        const prevState = globalUndoStack.pop();
+        // Filter the stack for this user
+        const userUndoStack = globalUndoStack.filter(state => 
+            state.timestamp >= joinTime
+        );
         
-        // Push current state to redo stack
+        if (userUndoStack.length === 0) {
+            // Send direct response for nothing to undo
+            socket.emit('undoResponse', false);
+            return;
+        }
+        
+        // Remove the last state from the global stack
+        globalUndoStack.pop();
+        
+        // Get previous state
+        const prevState = userUndoStack[userUndoStack.length - 1] || 
+                         (globalUndoStack.length > 0 ? globalUndoStack[globalUndoStack.length - 1] : null);
+        
+        if (!prevState) {
+            // If no previous state, use initial state
+            socket.emit('undoResponse', false);
+            return;
+        }
+        
+        // Add current state to redo stack
         globalRedoStack.push({
             shapes: [...currentShapes],
-            paths: [...currentPaths]
+            paths: [...currentPaths],
+            timestamp: new Date()
         });
         
         // Update current state
@@ -95,22 +167,49 @@ io.on('connection', (socket) => {
         currentPaths = prevState.paths;
         
         // Broadcast the changes to all clients
-        io.emit('applyState', prevState);
-        io.emit('updateUndoStack', globalUndoStack);
-        io.emit('updateRedoStack', globalRedoStack);
+        io.emit('applyState', {
+            shapes: currentShapes,
+            paths: currentPaths
+        });
+        
+        // Update all clients' stacks
+        for (const userId in connectedUsers) {
+            const userSocket = io.sockets.sockets.get(userId);
+            if (!userSocket) continue;
+            
+            const userJoinTime = userJoinTimes[userId];
+            if (!userJoinTime) continue;
+            
+            // Filter the stacks for this specific user
+            const filteredStack = globalUndoStack.filter(state => 
+                state.timestamp >= userJoinTime
+            );
+            
+            // Send filtered stacks to user
+            userSocket.emit('updateUndoStack', filteredStack);
+            userSocket.emit('updateRedoStack', globalRedoStack);
+        }
+        
+        // Send success response for undo
+        socket.emit('undoResponse', true);
     });
 
     // Handle redo request
     socket.on('requestRedo', () => {
-        if (globalRedoStack.length === 0) return;
+        if (globalRedoStack.length === 0) {
+            // Send direct response for nothing to redo
+            socket.emit('redoResponse', false);
+            return;
+        }
         
-        // Get the last state from redo stack
+        // Get the next state from redo stack
         const nextState = globalRedoStack.pop();
         
         // Push current state to undo stack
         globalUndoStack.push({
             shapes: [...currentShapes],
-            paths: [...currentPaths]
+            paths: [...currentPaths],
+            timestamp: new Date()
         });
         
         // Update current state
@@ -118,14 +217,65 @@ io.on('connection', (socket) => {
         currentPaths = nextState.paths;
         
         // Broadcast the changes to all clients
-        io.emit('applyState', nextState);
-        io.emit('updateUndoStack', globalUndoStack);
-        io.emit('updateRedoStack', globalRedoStack);
+        io.emit('applyState', {
+            shapes: currentShapes,
+            paths: currentPaths
+        });
+        
+        // Update all clients' stacks
+        for (const userId in connectedUsers) {
+            const userSocket = io.sockets.sockets.get(userId);
+            if (!userSocket) continue;
+            
+            const userJoinTime = userJoinTimes[userId];
+            if (!userJoinTime) continue;
+            
+            // Filter the stacks for this specific user
+            const filteredStack = globalUndoStack.filter(state => 
+                state.timestamp >= userJoinTime
+            );
+            
+            // Send filtered stacks to user
+            userSocket.emit('updateUndoStack', filteredStack);
+            userSocket.emit('updateRedoStack', globalRedoStack);
+        }
+        
+        // Send success response for redo
+        socket.emit('redoResponse', true);
     });
+
+    socket.on('sendMessage', (message) => {
+        const username = connectedUsers[socket.id]?.username || 'Anonymous';
+        const messageWithUser = {
+            ...message,
+            username: username,
+            timestamp: new Date().toISOString()
+        };
+        
+        // Broadcast to all clients including sender
+        io.emit('message', messageWithUser);
+    });
+
+    function handleUserDisconnect(socketId, username) {
+        console.log('User disconnected:', socketId);
+        
+        // Remove user join time
+        delete userJoinTimes[socketId];
+        
+        // Remove user from connected users
+        delete connectedUsers[socketId];
+        
+        // Broadcast updated user list
+        io.emit('updateUsers', Object.values(connectedUsers));
+        
+        // Notify remaining users
+        io.emit('userNotification', `${username} has left the whiteboard.`);
+    }
 
     // Handle disconnection
     socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
+        const username = connectedUsers[socket.id]?.username || 'Someone';
+        handleUserDisconnect(socket.id, username);
     });
 });
 
