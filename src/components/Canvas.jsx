@@ -317,111 +317,116 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const isNearby = (point, x, y, threshold) => Math.abs(point.x - x) < threshold && Math.abs(point.y - y) < threshold;
 
     return (
-        <div className="flex flex-col min-h-screen bg-gray-50 relative">
-            {/* Header */}
-            <div className="bg-white border-b shadow-sm p-4">
-                <div className="container mx-auto flex items-center justify-between">
-                    <h1 className="text-xl font-bold text-gray-800">Collaborative Canvas</h1>
-                    <div className="flex gap-2">
-                        <button 
-                            onClick={handleUndo} 
-                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
-                            title="Undo (Ctrl+Z)"
-                        >
-                            <Undo size={20} />
-                        </button>
-                        <button 
-                            onClick={handleRedo} 
-                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
-                            title="Redo (Ctrl+Y)"
-                        >
-                            <Redo size={20} />
-                        </button>
+        <div className="h-screen w-screen bg-gray-50 relative overflow-hidden">
+            {/* Header with title and controls */}
+            <div className="absolute top-0 left-0 right-0 bg-white/90 backdrop-blur-sm border-b shadow-sm p-4 z-40">
+                <div className="flex items-center justify-between">
+                    {/* Left side - Title and Undo/Redo */}
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-xl font-bold text-gray-800">Collaborative Canvas</h1>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={handleUndo} 
+                                className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                                title="Undo (Ctrl+Z)"
+                            >
+                                <Undo size={20} />
+                            </button>
+                            <button 
+                                onClick={handleRedo} 
+                                className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                                title="Redo (Ctrl+Y)"
+                            >
+                                <Redo size={20} />
+                            </button>
+                        </div>
                     </div>
+                    
+                    {/* Right side - Go to Chat button */}
+                    <button 
+                        onClick={() => navigate("/chat")} 
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2"
+                    >
+                        <ChevronLeft size={16} />
+                        Go to Chat
+                    </button>
                 </div>
             </div>
             
             {/* Alert popup */}
             {alert && (
-                <div className="fixed top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-md shadow-lg z-50 flex items-center">
+                <div className="fixed top-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-md shadow-lg z-50 flex items-center">
                     <AlertCircle size={16} className="mr-2" />
                     <span>{alert}</span>
                 </div>
             )}
             
-            {/* Toolbar */}
-            <div className="bg-white border-b shadow-sm">
-                <div className="container mx-auto p-2">
-                    <div className="flex items-center gap-2">
-                        <button 
-                            onClick={() => setMode("move")} 
-                            className={`p-2 rounded-md transition flex items-center gap-1 ${
-                                mode === "move" 
-                                    ? "bg-blue-100 text-blue-600" 
-                                    : "hover:bg-gray-100 text-gray-700"
-                            }`}
-                            title="Move Tool"
-                        >
-                            <Move size={20} />
-                            <span className="hidden sm:inline">Move</span>
-                        </button>
-                        <button 
-                            onClick={() => setMode("draw")} 
-                            className={`p-2 rounded-md transition flex items-center gap-1 ${
-                                mode === "draw" 
-                                    ? "bg-blue-100 text-blue-600" 
-                                    : "hover:bg-gray-100 text-gray-700"
-                            }`}
-                            title="Draw Tool"
-                        >
-                            <Pencil size={20} />
-                            <span className="hidden sm:inline">Draw</span>
-                        </button>
-                        <button 
-                            onClick={() => setMode("erase")} 
-                            className={`p-2 rounded-md transition flex items-center gap-1 ${
-                                mode === "erase" 
-                                    ? "bg-blue-100 text-blue-600" 
-                                    : "hover:bg-gray-100 text-gray-700"
-                            }`}
-                            title="Erase Tool"
-                        >
-                            <Eraser size={20} />
-                            <span className="hidden sm:inline">Erase</span>
-                        </button>
-                    </div>
+            {/* Toolbar - positioned below header */}
+            <div className="absolute top-[73px] left-0 right-0 bg-white/90 backdrop-blur-sm border-b shadow-sm p-2 z-40">
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={() => setMode("move")} 
+                        className={`p-2 rounded-md transition flex items-center gap-1 ${
+                            mode === "move" 
+                                ? "bg-blue-100 text-blue-600" 
+                                : "hover:bg-gray-100 text-gray-700"
+                        }`}
+                        title="Move Tool"
+                    >
+                        <Move size={20} />
+                        <span className="hidden sm:inline">Move</span>
+                    </button>
+                    <button 
+                        onClick={() => setMode("draw")} 
+                        className={`p-2 rounded-md transition flex items-center gap-1 ${
+                            mode === "draw" 
+                                ? "bg-blue-100 text-blue-600" 
+                                : "hover:bg-gray-100 text-gray-700"
+                        }`}
+                        title="Draw Tool"
+                    >
+                        <Pencil size={20} />
+                        <span className="hidden sm:inline">Draw</span>
+                    </button>
+                    <button 
+                        onClick={() => setMode("erase")} 
+                        className={`p-2 rounded-md transition flex items-center gap-1 ${
+                            mode === "erase" 
+                                ? "bg-blue-100 text-blue-600" 
+                                : "hover:bg-gray-100 text-gray-700"
+                        }`}
+                        title="Erase Tool"
+                    >
+                        <Eraser size={20} />
+                        <span className="hidden sm:inline">Erase</span>
+                    </button>
                 </div>
             </div>
             
-            {/* Main Canvas Area */}
-            <div className="flex-grow p-4">
-                <div className="container mx-auto">
-                    <div className="bg-white rounded-lg shadow-md p-4">
-                        <canvas 
-                            ref={canvasRef} 
-                            width={800} 
-                            height={500} 
-                            style={{
-                                cursor:
-                                    mode === "draw"
-                                        ? `url(${getCursorIcon("pencil")}) 0 24, auto`
-                                        : mode === "erase"
-                                            ? `url(${getCursorIcon("eraser")}) 0 24, auto`
-                                            : "default",
-                                backgroundColor: "#f8f9fa",
-                                border: "1px solid #dee2e6",
-                                borderRadius: "4px",
-                                maxWidth: "100%",
-                            }}
-                            className="mx-auto" 
-                            onMouseDown={handleMouseDown} 
-                            onMouseMove={handleMouseMove} 
-                            onMouseUp={handleMouseUp} 
-                            onContextMenu={handleContextMenu}
-                        />
-                    </div>
-                </div>
-            </div>
+            {/* Full Screen Canvas */}
+            <canvas 
+                ref={canvasRef} 
+                width={window.innerWidth} 
+                height={window.innerHeight - 125} // Account for header and toolbar height
+                style={{
+                    cursor:
+                        mode === "draw"
+                            ? `url(${getCursorIcon("pencil")}) 0 24, auto`
+                            : mode === "erase"
+                                ? `url(${getCursorIcon("eraser")}) 0 24, auto`
+                                : "default",
+                    backgroundColor: "#f8f9fa",
+                    position: "absolute",
+                    top: "125px", // Position below header and toolbar
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                }} 
+                onMouseDown={handleMouseDown} 
+                onMouseMove={handleMouseMove} 
+                onMouseUp={handleMouseUp} 
+                onContextMenu={handleContextMenu}
+            />
             
             {/* Context Menu */}
             {contextMenu && (
@@ -445,19 +450,6 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                     </button>
                 </div>
             )}
-            
-            {/* Footer navigation */}
-            <div className="bg-white border-t p-4">
-                <div className="container mx-auto">
-                    <button 
-                        onClick={() => navigate("/chat")} 
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2"
-                    >
-                        <ChevronLeft size={16} />
-                        Go to Chat
-                    </button>
-                </div>
-            </div>
         </div>
     );
 };
