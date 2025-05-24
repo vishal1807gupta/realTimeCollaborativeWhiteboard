@@ -13,7 +13,6 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const [mode, setMode] = useState("move");
     const [alert, setAlert] = useState(null);
     const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 1500 });
-    const [viewportSize, setViewportSize] = useState({ width: 800, height: 500 });
     const lastPushedStateRef = useRef(null);
     const alertTimeoutRef = useRef(null);
 
@@ -33,40 +32,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         }, 2000);
     };
 
-    // Update viewport size based on window size
-    useEffect(() => {
-        const updateViewportSize = () => {
-            const toolbarHeight = 120; // Approximate height of header + toolbar
-            const width = Math.max(400, window.innerWidth);
-            const height = Math.max(300, window.innerHeight - toolbarHeight);
-            setViewportSize({ width, height });
-        };
 
-        updateViewportSize();
-        window.addEventListener('resize', updateViewportSize);
-        return () => window.removeEventListener('resize', updateViewportSize);
-    }, []);
-
-    // Function to expand canvas if drawing goes beyond current bounds
-    const expandCanvasIfNeeded = (x, y) => {
-        const padding = 200; // Extra space to add when expanding
-        let newWidth = canvasSize.width;
-        let newHeight = canvasSize.height;
-        let expanded = false;
-
-        if (x + padding > canvasSize.width) {
-            newWidth = x + padding;
-            expanded = true;
-        }
-        if (y + padding > canvasSize.height) {
-            newHeight = y + padding;
-            expanded = true;
-        }
-
-        if (expanded) {
-            setCanvasSize({ width: newWidth, height: newHeight });
-        }
-    };
 
     const getCursorIcon = (type) => {
         const icon = type === "pencil" ? <Pencil size={24} /> : <Eraser size={24} />;
@@ -166,7 +132,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         };
 
         drawAllShapes();
-    }, [shapes, paths, canvasSize, viewportSize]);
+    }, [shapes, paths, canvasSize]);
 
     const handleMouseDown = (e) => {
         if (contextMenu) setContextMenu(null);
@@ -180,7 +146,6 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         if (mode === "draw") {
             pushToUndoStack(currentState);
             setIsDrawing(true);
-            expandCanvasIfNeeded(x, y);
             const newPaths = [...paths, { color: "black", width: 2, points: [{ x, y }] }];
             setPaths(newPaths);
             // Send the complete state including both shapes and paths
@@ -274,7 +239,6 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                 return;
             }
             
-            expandCanvasIfNeeded(x, y);
             const newPaths = [...paths];
             newPaths[newPaths.length - 1].points.push({ x, y });
             setPaths(newPaths);
@@ -287,14 +251,9 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
             let updatedShapes = shapes.map((shape) => {
                 if (shape.id === selectedShape.id) {
                     if (selectedShape.isResizing) {
-                        const newSize = Math.max(20, x - shape.x, y - shape.y);
-                        expandCanvasIfNeeded(shape.x + newSize, shape.y + newSize);
-                        return { ...shape, size: newSize };
+                        return { ...shape, size: Math.max(20, x - shape.x, y - shape.y) };
                     } else if (selectedShape.isDragging) {
-                        const newX = x - offset.x;
-                        const newY = y - offset.y;
-                        expandCanvasIfNeeded(newX + shape.size, newY + shape.size);
-                        return { ...shape, x: newX, y: newY };
+                        return { ...shape, x: x - offset.x, y: y - offset.y };
                     }
                 }
                 return shape;
@@ -328,10 +287,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
 
     const duplicateShape = (shape) => {
         pushToUndoStack({ shapes, paths });
-        const newX = shape.x + 20;
-        const newY = shape.y + 20;
-        expandCanvasIfNeeded(newX + shape.size, newY + shape.size);
-        const newShape = { ...shape, id: Date.now(), x: newX, y: newY };
+        const newShape = { ...shape, id: Date.now(), x: shape.x + 20, y: shape.y + 20 };
         const updatedShapes = [...shapes, newShape];
         setShapes(updatedShapes);
         // Send the complete state including both shapes and paths
@@ -463,8 +419,6 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                         backgroundColor: "#f8f9fa",
                         border: "none",
                         display: "block",
-                        minWidth: `${viewportSize.width}px`,
-                        minHeight: `${viewportSize.height}px`,
                     }}
                     onMouseDown={handleMouseDown} 
                     onMouseMove={handleMouseMove} 
