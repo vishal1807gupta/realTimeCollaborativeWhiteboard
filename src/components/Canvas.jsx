@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { socket } from "../socket";
-import { Pencil, Eraser, Move, Copy, Trash, Undo, Redo, ChevronLeft, AlertCircle } from "lucide-react";
+import { Pencil, Eraser, Move, Copy, Trash, Undo, Redo, MessageSquare, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { renderToString } from "react-dom/server";
 
@@ -12,6 +12,8 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const [isDrawing, setIsDrawing] = useState(false);
     const [mode, setMode] = useState("move");
     const [alert, setAlert] = useState(null);
+    const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 1500 });
+    const [viewportSize, setViewportSize] = useState({ width: 800, height: 500 });
     const lastPushedStateRef = useRef(null);
     const alertTimeoutRef = useRef(null);
 
@@ -29,6 +31,41 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         alertTimeoutRef.current = setTimeout(() => {
             setAlert(null);
         }, 2000);
+    };
+
+    // Update viewport size based on window size
+    useEffect(() => {
+        const updateViewportSize = () => {
+            const toolbarHeight = 120; // Approximate height of header + toolbar
+            const width = Math.max(400, window.innerWidth);
+            const height = Math.max(300, window.innerHeight - toolbarHeight);
+            setViewportSize({ width, height });
+        };
+
+        updateViewportSize();
+        window.addEventListener('resize', updateViewportSize);
+        return () => window.removeEventListener('resize', updateViewportSize);
+    }, []);
+
+    // Function to expand canvas if drawing goes beyond current bounds
+    const expandCanvasIfNeeded = (x, y) => {
+        const padding = 200; // Extra space to add when expanding
+        let newWidth = canvasSize.width;
+        let newHeight = canvasSize.height;
+        let expanded = false;
+
+        if (x + padding > canvasSize.width) {
+            newWidth = x + padding;
+            expanded = true;
+        }
+        if (y + padding > canvasSize.height) {
+            newHeight = y + padding;
+            expanded = true;
+        }
+
+        if (expanded) {
+            setCanvasSize({ width: newWidth, height: newHeight });
+        }
     };
 
     const getCursorIcon = (type) => {
@@ -129,7 +166,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         };
 
         drawAllShapes();
-    }, [shapes, paths]);
+    }, [shapes, paths, canvasSize, viewportSize]);
 
     const handleMouseDown = (e) => {
         if (contextMenu) setContextMenu(null);
@@ -143,6 +180,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         if (mode === "draw") {
             pushToUndoStack(currentState);
             setIsDrawing(true);
+            expandCanvasIfNeeded(x, y);
             const newPaths = [...paths, { color: "black", width: 2, points: [{ x, y }] }];
             setPaths(newPaths);
             // Send the complete state including both shapes and paths
@@ -236,6 +274,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                 return;
             }
             
+            expandCanvasIfNeeded(x, y);
             const newPaths = [...paths];
             newPaths[newPaths.length - 1].points.push({ x, y });
             setPaths(newPaths);
@@ -248,9 +287,14 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
             let updatedShapes = shapes.map((shape) => {
                 if (shape.id === selectedShape.id) {
                     if (selectedShape.isResizing) {
-                        return { ...shape, size: Math.max(20, x - shape.x, y - shape.y) };
+                        const newSize = Math.max(20, x - shape.x, y - shape.y);
+                        expandCanvasIfNeeded(shape.x + newSize, shape.y + newSize);
+                        return { ...shape, size: newSize };
                     } else if (selectedShape.isDragging) {
-                        return { ...shape, x: x - offset.x, y: y - offset.y };
+                        const newX = x - offset.x;
+                        const newY = y - offset.y;
+                        expandCanvasIfNeeded(newX + shape.size, newY + shape.size);
+                        return { ...shape, x: newX, y: newY };
                     }
                 }
                 return shape;
@@ -284,7 +328,10 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
 
     const duplicateShape = (shape) => {
         pushToUndoStack({ shapes, paths });
-        const newShape = { ...shape, id: Date.now(), x: shape.x + 20, y: shape.y + 20 };
+        const newX = shape.x + 20;
+        const newY = shape.y + 20;
+        expandCanvasIfNeeded(newX + shape.size, newY + shape.size);
+        const newShape = { ...shape, id: Date.now(), x: newX, y: newY };
         const updatedShapes = [...shapes, newShape];
         setShapes(updatedShapes);
         // Send the complete state including both shapes and paths
@@ -317,39 +364,34 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
     const isNearby = (point, x, y, threshold) => Math.abs(point.x - x) < threshold && Math.abs(point.y - y) < threshold;
 
     return (
-        <div className="h-screen w-screen bg-gray-50 relative overflow-hidden">
-            {/* Header with title and controls */}
-            <div className="absolute top-0 left-0 right-0 bg-white/90 backdrop-blur-sm border-b shadow-sm p-4 z-40">
-                <div className="flex items-center justify-between">
-                    {/* Left side - Title and Undo/Redo */}
-                    <div className="flex items-center gap-4">
-                        <h1 className="text-xl font-bold text-gray-800">Collaborative Canvas</h1>
-                        <div className="flex gap-2">
-                            <button 
-                                onClick={handleUndo} 
-                                className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
-                                title="Undo (Ctrl+Z)"
-                            >
-                                <Undo size={20} />
-                            </button>
-                            <button 
-                                onClick={handleRedo} 
-                                className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
-                                title="Redo (Ctrl+Y)"
-                            >
-                                <Redo size={20} />
-                            </button>
-                        </div>
+        <div className="flex flex-col h-screen bg-gray-50 relative overflow-hidden">
+            {/* Header */}
+            <div className="bg-white border-b shadow-sm p-4 flex-shrink-0">
+                <div className="flex items-center justify-between w-full">
+                    <h1 className="text-xl font-bold text-gray-800">Collaborative Canvas</h1>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={handleUndo} 
+                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                            title="Undo (Ctrl+Z)"
+                        >
+                            <Undo size={20} />
+                        </button>
+                        <button 
+                            onClick={handleRedo} 
+                            className="p-2 rounded-md hover:bg-gray-100 text-gray-700 transition"
+                            title="Redo (Ctrl+Y)"
+                        >
+                            <Redo size={20} />
+                        </button>
+                        <button 
+                            onClick={() => navigate("/chat")} 
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2 ml-2"
+                        >
+                            <MessageSquare size={16} />
+                            <span className="hidden sm:inline">Go to Chat</span>
+                        </button>
                     </div>
-                    
-                    {/* Right side - Go to Chat button */}
-                    <button 
-                        onClick={() => navigate("/chat")} 
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center gap-2"
-                    >
-                        <ChevronLeft size={16} />
-                        Go to Chat
-                    </button>
                 </div>
             </div>
             
@@ -361,72 +403,75 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
                 </div>
             )}
             
-            {/* Toolbar - positioned below header */}
-            <div className="absolute top-[73px] left-0 right-0 bg-white/90 backdrop-blur-sm border-b shadow-sm p-2 z-40">
-                <div className="flex items-center gap-2">
-                    <button 
-                        onClick={() => setMode("move")} 
-                        className={`p-2 rounded-md transition flex items-center gap-1 ${
-                            mode === "move" 
-                                ? "bg-blue-100 text-blue-600" 
-                                : "hover:bg-gray-100 text-gray-700"
-                        }`}
-                        title="Move Tool"
-                    >
-                        <Move size={20} />
-                        <span className="hidden sm:inline">Move</span>
-                    </button>
-                    <button 
-                        onClick={() => setMode("draw")} 
-                        className={`p-2 rounded-md transition flex items-center gap-1 ${
-                            mode === "draw" 
-                                ? "bg-blue-100 text-blue-600" 
-                                : "hover:bg-gray-100 text-gray-700"
-                        }`}
-                        title="Draw Tool"
-                    >
-                        <Pencil size={20} />
-                        <span className="hidden sm:inline">Draw</span>
-                    </button>
-                    <button 
-                        onClick={() => setMode("erase")} 
-                        className={`p-2 rounded-md transition flex items-center gap-1 ${
-                            mode === "erase" 
-                                ? "bg-blue-100 text-blue-600" 
-                                : "hover:bg-gray-100 text-gray-700"
-                        }`}
-                        title="Erase Tool"
-                    >
-                        <Eraser size={20} />
-                        <span className="hidden sm:inline">Erase</span>
-                    </button>
+            {/* Toolbar */}
+            <div className="bg-white border-b shadow-sm flex-shrink-0">
+                <div className="p-2">
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => setMode("move")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "move" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Move Tool"
+                        >
+                            <Move size={20} />
+                            <span className="hidden sm:inline">Move</span>
+                        </button>
+                        <button 
+                            onClick={() => setMode("draw")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "draw" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Draw Tool"
+                        >
+                            <Pencil size={20} />
+                            <span className="hidden sm:inline">Draw</span>
+                        </button>
+                        <button 
+                            onClick={() => setMode("erase")} 
+                            className={`p-2 rounded-md transition flex items-center gap-1 ${
+                                mode === "erase" 
+                                    ? "bg-blue-100 text-blue-600" 
+                                    : "hover:bg-gray-100 text-gray-700"
+                            }`}
+                            title="Erase Tool"
+                        >
+                            <Eraser size={20} />
+                            <span className="hidden sm:inline">Erase</span>
+                        </button>
+                    </div>
                 </div>
             </div>
             
-            {/* Full Screen Canvas */}
-            <canvas 
-                ref={canvasRef} 
-                width={window.innerWidth} 
-                height={window.innerHeight - 125} // Account for header and toolbar height
-                style={{
-                    cursor:
-                        mode === "draw"
-                            ? `url(${getCursorIcon("pencil")}) 0 24, auto`
-                            : mode === "erase"
-                                ? `url(${getCursorIcon("eraser")}) 0 24, auto`
-                                : "default",
-                    backgroundColor: "#f8f9fa",
-                    position: "absolute",
-                    top: "125px", // Position below header and toolbar
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                }} 
-                onMouseDown={handleMouseDown} 
-                onMouseMove={handleMouseMove} 
-                onMouseUp={handleMouseUp} 
-                onContextMenu={handleContextMenu}
-            />
+            {/* Main Canvas Area - Full Screen with Scrollbars */}
+            <div className="flex-grow overflow-auto">
+                <canvas 
+                    ref={canvasRef} 
+                    width={canvasSize.width} 
+                    height={canvasSize.height} 
+                    style={{
+                        cursor:
+                            mode === "draw"
+                                ? `url(${getCursorIcon("pencil")}) 0 24, auto`
+                                : mode === "erase"
+                                    ? `url(${getCursorIcon("eraser")}) 0 24, auto`
+                                    : "default",
+                        backgroundColor: "#f8f9fa",
+                        border: "none",
+                        display: "block",
+                        minWidth: `${viewportSize.width}px`,
+                        minHeight: `${viewportSize.height}px`,
+                    }}
+                    onMouseDown={handleMouseDown} 
+                    onMouseMove={handleMouseMove} 
+                    onMouseUp={handleMouseUp} 
+                    onContextMenu={handleContextMenu}
+                />
+            </div>
             
             {/* Context Menu */}
             {contextMenu && (

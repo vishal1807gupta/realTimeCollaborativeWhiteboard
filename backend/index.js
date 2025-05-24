@@ -19,7 +19,7 @@ app.use(cors());
 
 const io = new Server(server, {
     cors: {
-        origin: "https://whiteboard-prime.netlify.app", 
+        origin: ["https://livesketchchat.netlify.app", "http://localhost:5173"],
         methods: ["GET", "POST"]
     } // Allowing backend to accept requests from my frontend
 });
