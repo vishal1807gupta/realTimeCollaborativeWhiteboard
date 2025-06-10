@@ -6,9 +6,9 @@ import { renderToString } from "react-dom/server";
 
 const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMenu}) => {
     const navigate = useNavigate();
-    const canvasRef = useRef(null);
+    const canvasRef = useRef(null);  // it's like a pointer which gives reference to actually change properties of the canvas
     const [selectedShape, setSelectedShape] = useState(null);
-    const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const [offset, setOffset] = useState({ x: 0, y: 0 }); // dragging part
     const [isDrawing, setIsDrawing] = useState(false);
     const [mode, setMode] = useState("move");
     const [alert, setAlert] = useState(null);
@@ -27,6 +27,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
         setAlert(message);
         
         // Hide it after 2 seconds
+        // store the timeout ID in a ref to clear it later
         alertTimeoutRef.current = setTimeout(() => {
             setAlert(null);
         }, 2000);
@@ -244,7 +245,8 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
             setPaths(newPaths);
             // Send the complete state including both shapes and paths
             socket.emit("updatePaths", newPaths);
-            socket.emit("updateShapes", shapes); // Also send shapes to ensure consistency
+            socket.emit("updateShapes", shapes);
+            return; // Also send shapes to ensure consistency
         }
     
         if (selectedShape) {
@@ -302,6 +304,7 @@ const Canvas = ({ shapes, setShapes, paths, setPaths, contextMenu, setContextMen
 
         if ((shape.type === "square" && remainingSquares === 1) || (shape.type === "circle" && remainingCircles === 1)) {
             showAlert("Cannot delete the last " + shape.type);
+            setContextMenu(null);
             return; // Prevent deleting the last one
         }
         pushToUndoStack({ shapes, paths });

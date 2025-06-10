@@ -69,10 +69,6 @@ io.on('connection', (socket) => {
         handleUserDisconnect(socket.id, username);
     });
 
-    socket.on("message", (data) => {
-        io.emit("message", data); // Broadcast message to all users
-    });
-
     // Handle updates to shapes
     socket.on('updateShapes', (shapes) => {
         currentShapes = shapes;
@@ -142,12 +138,12 @@ io.on('connection', (socket) => {
             return;
         }
         
-        // Remove the last state from the global stack
-        globalUndoStack.pop();
-        
         // Get previous state
         const prevState = userUndoStack[userUndoStack.length - 1] || 
                          (globalUndoStack.length > 0 ? globalUndoStack[globalUndoStack.length - 1] : null);
+                        
+        // Remove the last state from the global stack
+        globalUndoStack.pop();
         
         if (!prevState) {
             // If no previous state, use initial state
@@ -181,13 +177,17 @@ io.on('connection', (socket) => {
             if (!userJoinTime) continue;
             
             // Filter the stacks for this specific user
-            const filteredStack = globalUndoStack.filter(state => 
+            const filteredUndoStack = globalUndoStack.filter(state => 
+                state.timestamp >= userJoinTime
+            );
+
+            const filteredRedoStack = globalRedoStack.filter(state => 
                 state.timestamp >= userJoinTime
             );
             
             // Send filtered stacks to user
-            userSocket.emit('updateUndoStack', filteredStack);
-            userSocket.emit('updateRedoStack', globalRedoStack);
+            userSocket.emit('updateUndoStack', filteredUndoStack);
+            userSocket.emit('updateRedoStack', filteredRedoStack);
         }
         
         // Send success response for undo
@@ -196,14 +196,26 @@ io.on('connection', (socket) => {
 
     // Handle redo request
     socket.on('requestRedo', () => {
-        if (globalRedoStack.length === 0) {
+
+        const joinTime = userJoinTimes[socket.id];
+        if (!joinTime) return;
+        
+        // Filter the stack for this user
+        const userRedoStack = globalRedoStack.filter(state => 
+            state.timestamp >= joinTime
+        );
+
+        if (userRedoStack.length === 0) {
             // Send direct response for nothing to redo
             socket.emit('redoResponse', false);
             return;
         }
         
         // Get the next state from redo stack
-        const nextState = globalRedoStack.pop();
+        const nextState = userRedoStack[userRedoStack.length - 1] || 
+                         (globalRedoStack.length > 0 ? globalRedoStack[globalRedoStack.length - 1] : null);
+
+        globalRedoStack.pop();
         
         // Push current state to undo stack
         globalUndoStack.push({
@@ -231,13 +243,17 @@ io.on('connection', (socket) => {
             if (!userJoinTime) continue;
             
             // Filter the stacks for this specific user
-            const filteredStack = globalUndoStack.filter(state => 
+             const filteredUndoStack = globalUndoStack.filter(state => 
+                state.timestamp >= userJoinTime
+            );
+
+            const filteredRedoStack = globalRedoStack.filter(state => 
                 state.timestamp >= userJoinTime
             );
             
             // Send filtered stacks to user
-            userSocket.emit('updateUndoStack', filteredStack);
-            userSocket.emit('updateRedoStack', globalRedoStack);
+            userSocket.emit('updateUndoStack', filteredUndoStack);
+            userSocket.emit('updateRedoStack', filteredRedoStack);
         }
         
         // Send success response for redo
